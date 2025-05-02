@@ -52,13 +52,11 @@ with st.expander("💬 Describe your income sources in your own words"):
 # ---- Analyze Button ----
 if st.button("🔍 Analyze My Tax Position"):
     with st.spinner("Preparing your tax analysis..."):
-        # Validate upload
         if not uploaded_file:
             st.warning("Please upload a CSV or PDF file.")
             st.stop()
 
         filename = uploaded_file.name.lower()
-        # Read CSV or PDF
         if filename.endswith('.csv'):
             try:
                 df = pd.read_csv(uploaded_file)
@@ -95,7 +93,6 @@ if st.button("🔍 Analyze My Tax Position"):
             except Exception:
                 pass
 
-        # Show parsed data
         st.success("Statement uploaded successfully!")
         st.dataframe(df.head())
 
@@ -114,14 +111,14 @@ Analyze the provided transactions (last 3 months if available) and suggest:
 Respond concisely.
 """
 
-        # ---- OpenAI Call with Fallback on Quota ----
+        # ---- OpenAI Call with Fallback ----
         api_key = st.secrets.get("OPENAI_API_KEY")
         if not api_key:
             st.error("OPENAI_API_KEY not found in secrets.")
             st.stop()
         client = openai.OpenAI(api_key=api_key)
 
-        # Try GPT-3.5-turbo first
+        # Primary call
         try:
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
@@ -133,24 +130,24 @@ Respond concisely.
             answer = response.choices[0].message.content
         except Exception as e:
             err = repr(e).lower()
-            # Fallback to text-davinci-003 if quota exceeded
             if 'insufficient_quota' in err or 'rate limit' in err:
-                st.info("GPT-3.5-turbo quota exceeded; falling back to text-davinci-003...")
+                st.info("GPT-3.5-turbo quota exceeded; falling back to gpt-3.5-turbo-16k...")
                 try:
-                    resp2 = client.completions.create(
-                        model="text-davinci-003",
-                        prompt=prompt,
-                        max_tokens=500
+                    response2 = client.chat.completions.create(
+                        model="gpt-3.5-turbo-16k",
+                        messages=[
+                            {"role": "system", "content": "You are a CA for Indian tax filers."},
+                            {"role": "user", "content": prompt}
+                        ]
                     )
-                    answer = resp2.choices[0].text.strip()
+                    answer = response2.choices[0].message.content
                 except Exception as e2:
-                    st.error(f"Fallback OpenAI API error: {e2}")
+                    st.error(f"Fallback API error: {e2}")
                     st.stop()
             else:
                 st.error(f"OpenAI API error: {e}")
                 st.stop()
 
-        # Display answer
         st.markdown("---")
         st.subheader("🧾 Tax Summary")
         st.write(answer)
