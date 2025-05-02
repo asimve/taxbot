@@ -10,17 +10,27 @@ st.title("🧾 DesiTaxBot – India's Personal CA")
 
 # ---- Sidebar ----
 st.sidebar.header("User Info")
-income_type = st.sidebar.selectbox("Income Source", ["Freelance", "Options Trading", "Salaried", "Rental Income", "Multiple"])
+income_type = st.sidebar.selectbox(
+    "Income Source", 
+    ["Freelance", "Options Trading", "Salaried", "Rental Income", "Multiple"]
+)
 is_gst_registered = st.sidebar.radio("Are you GST Registered?", ["Yes", "No"])
-state = st.sidebar.selectbox("Your State", ["Delhi", "Maharashtra", "Karnataka", "Other"])
+state = st.sidebar.selectbox(
+    "Your State", 
+    ["Delhi", "Maharashtra", "Karnataka", "Other"]
+)
 
 # ---- File Upload ----
 st.header("📤 Upload Bank or Ledger Statement")
-uploaded_file = st.file_uploader("Upload your bank statement (CSV or PDF)", type=["csv", "pdf"])
+uploaded_file = st.file_uploader(
+    "Upload your bank statement (CSV or PDF)", type=["csv", "pdf"]
+)
 
 # ---- Description Box ----
 with st.expander("💬 Describe your income sources in your own words"):
-    user_description = st.text_area("E.g. I am a freelancer working on Upwork and also earning rental income")
+    user_description = st.text_area(
+        "E.g. I am a freelancer working on Upwork and also earning rental income"
+    )
 
 # ---- Submit Button ----
 if st.button("🔍 Analyze My Tax Position"):
@@ -45,8 +55,8 @@ if st.button("🔍 Analyze My Tax Position"):
         # PDF handling
         elif file_ext == 'pdf':
             pdf_bytes = uploaded_file.read()
-            # Try without password
             success = False
+            # Attempt without password
             try:
                 with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
                     tables = []
@@ -58,12 +68,17 @@ if st.button("🔍 Analyze My Tax Position"):
                         df = pd.concat(tables, ignore_index=True)
                         success = True
             except Exception as first_err:
-                # If encrypted, prompt for password
-                if 'PDFPasswordIncorrect' in repr(first_err) or 'encrypted' in repr(first_err).lower():
-                    pwd = st.text_input("This PDF is encrypted. Enter password:", type="password")
+                # If PDF is encrypted, prompt for password
+                err_repr = repr(first_err).lower()
+                if 'pdfpasswordincorrect' in err_repr or 'encrypted' in err_repr:
+                    pwd = st.text_input(
+                        "This PDF is encrypted. Enter password:", type="password"
+                    )
                     if pwd:
                         try:
-                            with pdfplumber.open(io.BytesIO(pdf_bytes), password=pwd) as pdf:
+                            with pdfplumber.open(
+                                io.BytesIO(pdf_bytes), password=pwd
+                            ) as pdf:
                                 tables = []
                                 for page in pdf.pages:
                                     tbl = page.extract_table()
@@ -81,14 +96,16 @@ if st.button("🔍 Analyze My Tax Position"):
                 else:
                     st.error(f"Error processing PDF: {first_err}")
                     st.stop()
+
             if not success:
                 st.error("No tabular data found in the PDF.")
                 st.stop()
+
         else:
             st.error("Unsupported file type. Please upload CSV or PDF.")
             st.stop()
 
-        # Show parsed data
+        # Display parsed data
         st.success("Statement uploaded successfully!")
         st.dataframe(df.head())
 
@@ -107,7 +124,7 @@ Analyze the uploaded data and suggest:
 Respond concisely.
 """
 
-        # Initialize OpenAI client for v1.0.0+ SDK
+        # Initialize OpenAI client
         api_key = st.secrets.get("OPENAI_API_KEY")
         if not api_key:
             st.error("OPENAI_API_KEY not found in secrets. Please configure your app secrets.")
