@@ -31,7 +31,6 @@ pdf_password = None
 if uploaded_file and uploaded_file.name.lower().endswith('.pdf'):
     pdf_bytes = uploaded_file.read()
     try:
-        # Try opening without password
         with pdfplumber.open(io.BytesIO(pdf_bytes)):
             pass
     except Exception as e:
@@ -66,7 +65,6 @@ if st.button("🔍 Analyze My Tax Position"):
                 st.error(f"Error reading CSV: {e}")
                 st.stop()
         else:
-            # PDF handling
             if pdf_encrypted and not pdf_password:
                 st.error("PDF password is required to extract data.")
                 st.stop()
@@ -86,16 +84,15 @@ if st.button("🔍 Analyze My Tax Position"):
                 st.stop()
 
         # ---- Optional: Filter last 3 months by date column ----
-        date_cols = [col for col in df.columns if 'date' in col.lower()]
+        date_cols = [col for col in df.columns if isinstance(col, str) and 'date' in col.lower()]
         if date_cols:
             try:
-                # parse first date column
                 col = date_cols[0]
                 df[col] = pd.to_datetime(df[col], errors='coerce')
                 cutoff = pd.Timestamp.now() - pd.DateOffset(months=3)
                 df = df[df[col] >= cutoff]
             except Exception:
-                pass  # if parsing fails, proceed with full df
+                pass  # proceed with full df if parsing fails
 
         # Show parsed data
         st.success("Statement uploaded successfully!")
@@ -116,7 +113,7 @@ Analyze the provided transactions (last 3 months if available) and suggest:
 Respond concisely.
 """
 
-        # ---- OpenAI call (using 3.5 turbo) ----
+        # ---- OpenAI call ----
         api_key = st.secrets.get("OPENAI_API_KEY")
         if not api_key:
             st.error("OPENAI_API_KEY not found in secrets.")
