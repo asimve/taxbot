@@ -22,12 +22,15 @@ uploaded_file = st.file_uploader("Upload your bank statement (CSV or PDF)", type
 with st.expander("💬 Describe your income sources in your own words"):
     user_description = st.text_area("E.g. I am a freelancer working on Upwork and also earning rental income")
 
-# ---- Submit Button ----nif st.button("🔍 Analyze My Tax Position"):
+# ---- Submit Button ----
+if st.button("🔍 Analyze My Tax Position"):
     with st.spinner("Preparing your tax analysis..."):
+        # Ensure file uploaded
         if uploaded_file is None:
             st.warning("Please upload a CSV or PDF file before analyzing.")
             st.stop()
 
+        # Determine file type
         file_ext = uploaded_file.name.split('.')[-1].lower()
         df = None
 
@@ -39,12 +42,11 @@ with st.expander("💬 Describe your income sources in your own words"):
                 st.error(f"Error reading CSV: {e}")
                 st.stop()
 
-        # PDF handling with optional password prompt
+        # PDF handling
         elif file_ext == 'pdf':
             pdf_bytes = uploaded_file.read()
-            password = None
+            # Try without password
             success = False
-            # Attempt without password
             try:
                 with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
                     tables = []
@@ -55,13 +57,13 @@ with st.expander("💬 Describe your income sources in your own words"):
                     if tables:
                         df = pd.concat(tables, ignore_index=True)
                         success = True
-            except Exception as e:
-                # Check for password error
-                if "PDFPasswordIncorrect" in repr(e) or "encrypted PDF" in repr(e).lower():
-                    password = st.text_input("This PDF appears protected. Enter PDF password:", type="password")
-                    if password:
+            except Exception as first_err:
+                # If encrypted, prompt for password
+                if 'PDFPasswordIncorrect' in repr(first_err) or 'encrypted' in repr(first_err).lower():
+                    pwd = st.text_input("This PDF is encrypted. Enter password:", type="password")
+                    if pwd:
                         try:
-                            with pdfplumber.open(io.BytesIO(pdf_bytes), password=password) as pdf:
+                            with pdfplumber.open(io.BytesIO(pdf_bytes), password=pwd) as pdf:
                                 tables = []
                                 for page in pdf.pages:
                                     tbl = page.extract_table()
@@ -70,29 +72,27 @@ with st.expander("💬 Describe your income sources in your own words"):
                                 if tables:
                                     df = pd.concat(tables, ignore_index=True)
                                     success = True
-                        except Exception as ex:
-                            st.error(f"Password provided is incorrect or parsing failed: {ex}")
+                        except Exception as pwd_err:
+                            st.error(f"Password incorrect or parsing failed: {pwd_err}")
                             st.stop()
                     else:
-                        st.error("Password is required to open this PDF.")
+                        st.error("PDF password required to proceed.")
                         st.stop()
                 else:
-                    st.error(f"Error processing PDF: {e}")
+                    st.error(f"Error processing PDF: {first_err}")
                     st.stop()
-
             if not success:
-                st.error("No tabular data found in the uploaded PDF.")
+                st.error("No tabular data found in the PDF.")
                 st.stop()
-
         else:
             st.error("Unsupported file type. Please upload CSV or PDF.")
             st.stop()
 
-        # Display parsed data
+        # Show parsed data
         st.success("Statement uploaded successfully!")
         st.dataframe(df.head())
 
-        # Build prompt for OpenAI
+        # Build LLM prompt
         prompt = f"""
 You are a smart Indian tax advisor AI.
 User's income source is: {income_type}
@@ -100,20 +100,23 @@ GST Registered: {is_gst_registered}
 State: {state}
 Description: {user_description}
 
-Analyze the uploaded bank/ledger data and suggest:
-  - The correct ITR form
-  - Key deductions applicable
-  - Any red flags or alerts
-Provide the answer concisely without disclaimers.
+Analyze the uploaded data and suggest:
+- Correct ITR form
+- Key deductions
+- Any red flags
+Respond concisely.
 """
 
-        openai.api_key = st.secrets.get("OPENAI_API_KEY")
-        if not openai.api_key:
+        # Initialize OpenAI client for v1.0.0+ SDK
+        api_key = st.secrets.get("OPENAI_API_KEY")
+        if not api_key:
             st.error("OPENAI_API_KEY not found in secrets. Please configure your app secrets.")
             st.stop()
+        client = openai.OpenAI(api_key=api_key)
 
+        # Call the API
         try:
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-4",
                 messages=[
                     {"role": "system", "content": "You are a CA for Indian tax filers."},
@@ -124,8 +127,8 @@ Provide the answer concisely without disclaimers.
             st.markdown("---")
             st.subheader("🧾 Tax Summary")
             st.write(answer)
-        except Exception as e:
-            st.error(f"Error from OpenAI API: {e}")
+        except Exception as api_err:
+            st.error(f"OpenAI API error: {api_err}")
 
 # ---- Footer ----
 st.markdown("---")
