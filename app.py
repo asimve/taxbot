@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import pdfplumber
 import openai
+import requests
 
 # ---- Setup ----
 st.set_page_config(page_title="DesiTaxBot – Your Personal Tax Assistant")
@@ -52,12 +53,13 @@ with st.expander("💬 Describe your income sources in your own words"):
 # ---- Analyze Button ----
 if st.button("🔍 Analyze My Tax Position"):
     with st.spinner("Preparing your tax analysis..."):
+        # Validate upload
         if not uploaded_file:
             st.warning("Please upload a CSV or PDF file.")
             st.stop()
 
-        filename = uploaded_file.name.lower()
-        if filename.endswith('.csv'):
+        # Parse file
+        if uploaded_file.name.lower().endswith('.csv'):
             try:
                 df = pd.read_csv(uploaded_file)
             except Exception as e:
@@ -82,76 +84,82 @@ if st.button("🔍 Analyze My Tax Position"):
                 st.error(f"Error processing PDF: {e}")
                 st.stop()
 
-        # ---- Optional: Filter last 3 months ----
-        date_cols = [col for col in df.columns if isinstance(col, str) and 'date' in col.lower()]
+        # Optional: filter last 3 months
+        date_cols = [c for c in df.columns if isinstance(c, str) and 'date' in c.lower()]
         if date_cols:
             try:
-                col = date_cols[0]
-                df[col] = pd.to_datetime(df[col], errors='coerce')
+                c = date_cols[0]
+                df[c] = pd.to_datetime(df[c], errors='coerce')
                 cutoff = pd.Timestamp.now() - pd.DateOffset(months=3)
-                df = df[df[col] >= cutoff]
-            except Exception:
+                df = df[df[c] >= cutoff]
+            except:
                 pass
 
         st.success("Statement uploaded successfully!")
         st.dataframe(df.head())
 
-        # ---- Build Prompt ----
+        # Build LLM prompt
         prompt = f"""
 You are a smart Indian tax advisor AI.
-User's income source is: {income_type}
+User's income source: {income_type}
 GST Registered: {is_gst_registered}
 State: {state}
 Description: {user_description}
-
-Analyze the provided transactions (last 3 months if available) and suggest:
+Provide:
 - Correct ITR form
 - Key deductions
 - Any red flags
-Respond concisely.
+Based on last 3 months of transactions.
 """
 
-        # ---- OpenAI Call with Fallback ----
-        api_key = st.secrets.get("OPENAI_API_KEY")
-        if not api_key:
-            st.error("OPENAI_API_KEY not found in secrets.")
+        # Prepare clients
+        openai_key = st.secrets.get("OPENAI_API_KEY")
+        hf_token = st.secrets.get("HUGGINGFACE_TOKEN")
+
+        answer = None
+
+        # Try OpenAI
+        if openai_key:
+            client = openai.OpenAI(api_key=openai_key)
+            try:
+                resp = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role":"system","content":"You are a CA for Indian tax filers."},
+                              {"role":"user","content":prompt}]
+                )
+                answer = resp.choices[0].message.content
+            except Exception as oe:
+                # Quota error
+                if 'insufficient_quota' in repr(oe).lower():
+                    st.warning("OpenAI quota exceeded.")
+                else:
+                    st.error(f"OpenAI error: {oe}")
+
+        # Fallback to Hugging Face Inference
+        if not answer and hf_token:
+            try:
+                headers = {"Authorization": f"Bearer {hf_token}"}
+                json_data = {"inputs": prompt}
+                r = requests.post(
+                    "https://api-inference.huggingface.co/models/google/flan-t5-large",
+                    headers=headers, json=json_data
+                )
+                if r.status_code == 200:
+                    answer = r.json()[0]['generated_text']
+                else:
+                    st.error(f"HuggingFace API error {r.status_code}: {r.text}")
+            except Exception as he:
+                st.error(f"HuggingFace error: {he}")
+
+        if not answer:
+            st.error("No LLM available. Please configure an API key (OpenAI or Hugging Face).")
             st.stop()
-        client = openai.OpenAI(api_key=api_key)
 
-        # Primary call
-        try:
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a CA for Indian tax filers."},
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            answer = response.choices[0].message.content
-        except Exception as e:
-            err = repr(e).lower()
-            if 'insufficient_quota' in err or 'rate limit' in err:
-                st.info("GPT-3.5-turbo quota exceeded; falling back to gpt-3.5-turbo-16k...")
-                try:
-                    response2 = client.chat.completions.create(
-                        model="gpt-3.5-turbo-16k",
-                        messages=[
-                            {"role": "system", "content": "You are a CA for Indian tax filers."},
-                            {"role": "user", "content": prompt}
-                        ]
-                    )
-                    answer = response2.choices[0].message.content
-                except Exception as e2:
-                    st.error(f"Fallback API error: {e2}")
-                    st.stop()
-            else:
-                st.error(f"OpenAI API error: {e}")
-                st.stop()
-
+        # Show answer
         st.markdown("---")
         st.subheader("🧾 Tax Summary")
         st.write(answer)
 
-# ---- Footer ----
+# Footer
 st.markdown("---")
-st.caption("DesiTaxBot is a prototype and helps prepare tax analysis only.")
+st.caption("DesiTaxBot prototype — requires valid LLM API key.")
