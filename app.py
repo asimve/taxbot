@@ -24,7 +24,7 @@ uploaded_file = st.file_uploader(
     "Upload your bank statement (CSV or PDF)", type=["csv", "pdf"]
 )
 
-# ---- Pre-process PDF encryption ----
+# ---- PDF Encryption Pre-check ----
 pdf_bytes = None
 pdf_encrypted = False
 pdf_password = None
@@ -43,7 +43,7 @@ if uploaded_file and uploaded_file.name.lower().endswith('.pdf'):
     if pdf_encrypted:
         pdf_password = st.text_input("This PDF is encrypted. Enter password:", type="password")
 
-# ---- Description Box ----
+# ---- Income Description ----
 with st.expander("💬 Describe your income sources in your own words"):
     user_description = st.text_area(
         "E.g. I am a freelancer working on Upwork and also earning rental income"
@@ -52,12 +52,13 @@ with st.expander("💬 Describe your income sources in your own words"):
 # ---- Analyze Button ----
 if st.button("🔍 Analyze My Tax Position"):
     with st.spinner("Preparing your tax analysis..."):
+        # Validate upload
         if not uploaded_file:
             st.warning("Please upload a CSV or PDF file.")
             st.stop()
 
         filename = uploaded_file.name.lower()
-        # Read file into DataFrame
+        # Read CSV or PDF
         if filename.endswith('.csv'):
             try:
                 df = pd.read_csv(uploaded_file)
@@ -83,7 +84,7 @@ if st.button("🔍 Analyze My Tax Position"):
                 st.error(f"Error processing PDF: {e}")
                 st.stop()
 
-        # ---- Optional: Filter last 3 months by date column ----
+        # ---- Optional: Filter last 3 months ----
         date_cols = [col for col in df.columns if isinstance(col, str) and 'date' in col.lower()]
         if date_cols:
             try:
@@ -92,13 +93,13 @@ if st.button("🔍 Analyze My Tax Position"):
                 cutoff = pd.Timestamp.now() - pd.DateOffset(months=3)
                 df = df[df[col] >= cutoff]
             except Exception:
-                pass  # proceed with full df if parsing fails
+                pass
 
         # Show parsed data
         st.success("Statement uploaded successfully!")
         st.dataframe(df.head())
 
-        # ---- Build LLM prompt ----
+        # ---- Build Prompt ----
         prompt = f"""
 You are a smart Indian tax advisor AI.
 User's income source is: {income_type}
@@ -113,12 +114,14 @@ Analyze the provided transactions (last 3 months if available) and suggest:
 Respond concisely.
 """
 
-        # ---- OpenAI call ----
+        # ---- OpenAI Call with Fallback on Quota ----
         api_key = st.secrets.get("OPENAI_API_KEY")
         if not api_key:
             st.error("OPENAI_API_KEY not found in secrets.")
             st.stop()
         client = openai.OpenAI(api_key=api_key)
+
+        # Try GPT-3.5-turbo first
         try:
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
@@ -128,11 +131,29 @@ Respond concisely.
                 ]
             )
             answer = response.choices[0].message.content
-            st.markdown("---")
-            st.subheader("🧾 Tax Summary")
-            st.write(answer)
         except Exception as e:
-            st.error(f"OpenAI API error: {e}")
+            err = repr(e).lower()
+            # Fallback to text-davinci-003 if quota exceeded
+            if 'insufficient_quota' in err or 'rate limit' in err:
+                st.info("GPT-3.5-turbo quota exceeded; falling back to text-davinci-003...")
+                try:
+                    resp2 = client.completions.create(
+                        model="text-davinci-003",
+                        prompt=prompt,
+                        max_tokens=500
+                    )
+                    answer = resp2.choices[0].text.strip()
+                except Exception as e2:
+                    st.error(f"Fallback OpenAI API error: {e2}")
+                    st.stop()
+            else:
+                st.error(f"OpenAI API error: {e}")
+                st.stop()
+
+        # Display answer
+        st.markdown("---")
+        st.subheader("🧾 Tax Summary")
+        st.write(answer)
 
 # ---- Footer ----
 st.markdown("---")
