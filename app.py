@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import openai
 import json
+import pdfplumber
 
 # ---- Setup ----
 st.set_page_config(page_title="DesiTaxBot – Your Personal Tax Assistant")
@@ -15,7 +16,7 @@ state = st.sidebar.selectbox("Your State", ["Delhi", "Maharashtra", "Karnataka",
 
 # ---- File Upload ----
 st.header("📤 Upload Bank or Ledger Statement")
-uploaded_file = st.file_uploader("Upload your bank statement (CSV preferred)", type=["csv"])
+uploaded_file = st.file_uploader("Upload your bank statement (CSV or PDF)", type=["csv", "pdf"])
 
 # ---- Description Box ----
 with st.expander("💬 Describe your income sources in your own words"):
@@ -23,16 +24,39 @@ with st.expander("💬 Describe your income sources in your own words"):
 
 # ---- Submit Button ----
 if st.button("🔍 Analyze My Tax Position"):
-    with st.spinner("Talking to CA..."):
+    with st.spinner("Preparing your tax analysis..."):
+        # Read and parse uploaded file
         if uploaded_file is not None:
+            file_ext = uploaded_file.name.split('.')[-1].lower()
             try:
-                df = pd.read_csv(uploaded_file)
+                if file_ext == 'csv':
+                    df = pd.read_csv(uploaded_file)
+                elif file_ext == 'pdf':
+                    tables = []
+                    with pdfplumber.open(uploaded_file) as pdf:
+                        for page in pdf.pages:
+                            tbl = page.extract_table()
+                            if tbl:
+                                df_page = pd.DataFrame(tbl[1:], columns=tbl[0])
+                                tables.append(df_page)
+                    if tables:
+                        df = pd.concat(tables, ignore_index=True)
+                    else:
+                        st.error("No tabular data found in the uploaded PDF.")
+                        st.stop()
+                else:
+                    st.error("Unsupported file type.")
+                    st.stop()
+
                 st.success("Statement uploaded successfully!")
                 st.dataframe(df.head())
             except Exception as e:
-                st.error(f"Error reading file: {e}")
+                st.error(f"Error processing file: {e}")
                 st.stop()
-        
+        else:
+            st.warning("Please upload a CSV or PDF file before analyzing.")
+            st.stop()
+
         # Build prompt for OpenAI
         prompt = f"""
         You are a smart Indian tax advisor AI.
@@ -41,12 +65,14 @@ if st.button("🔍 Analyze My Tax Position"):
         State: {state}
         Description: {user_description}
 
-        Suggest applicable ITR form, key deductions, and red flags if any.
-        Don't give legal disclaimers. Be direct.
+        Analyze the uploaded bank/ledger data and suggest:
+          - The correct ITR form
+          - Key deductions applicable
+          - Any red flags or alerts
+        Provide the answer concisely without disclaimers.
         """
 
         openai.api_key = st.secrets["OPENAI_API_KEY"]
-
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-4",
@@ -60,8 +86,8 @@ if st.button("🔍 Analyze My Tax Position"):
             st.subheader("🧾 Tax Summary")
             st.write(answer)
         except Exception as e:
-            st.error(f"OpenAI error: {e}")
+            st.error(f"Error from OpenAI API: {e}")
 
 # ---- Footer ----
 st.markdown("---")
-st.caption("DesiTaxBot is a prototype and does not file taxes on your behalf (yet!).")
+st.caption("DesiTaxBot is a prototype and helps prepare tax analysis only.")
