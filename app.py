@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
 import openai
-import json
-import pdfplumber
 import io
+import pdfplumber
 
 # ---- Setup ----
 st.set_page_config(page_title="DesiTaxBot – Your Personal Tax Assistant")
@@ -25,39 +24,73 @@ with st.expander("💬 Describe your income sources in your own words"):
 
 # ---- Submit Button ----nif st.button("🔍 Analyze My Tax Position"):
     with st.spinner("Preparing your tax analysis..."):
-        # Validate upload
         if uploaded_file is None:
             st.warning("Please upload a CSV or PDF file before analyzing.")
             st.stop()
 
-        # Read and parse uploaded file
         file_ext = uploaded_file.name.split('.')[-1].lower()
-        try:
-            if file_ext == 'csv':
+        df = None
+
+        # CSV handling
+        if file_ext == 'csv':
+            try:
                 df = pd.read_csv(uploaded_file)
-            elif file_ext == 'pdf':
-                pdf_bytes = uploaded_file.read()
-                tables = []
+            except Exception as e:
+                st.error(f"Error reading CSV: {e}")
+                st.stop()
+
+        # PDF handling with optional password prompt
+        elif file_ext == 'pdf':
+            pdf_bytes = uploaded_file.read()
+            password = None
+            success = False
+            # Attempt without password
+            try:
                 with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                    tables = []
                     for page in pdf.pages:
                         tbl = page.extract_table()
                         if tbl:
-                            df_page = pd.DataFrame(tbl[1:], columns=tbl[0])
-                            tables.append(df_page)
-                if tables:
-                    df = pd.concat(tables, ignore_index=True)
+                            tables.append(pd.DataFrame(tbl[1:], columns=tbl[0]))
+                    if tables:
+                        df = pd.concat(tables, ignore_index=True)
+                        success = True
+            except Exception as e:
+                # Check for password error
+                if "PDFPasswordIncorrect" in repr(e) or "encrypted PDF" in repr(e).lower():
+                    password = st.text_input("This PDF appears protected. Enter PDF password:", type="password")
+                    if password:
+                        try:
+                            with pdfplumber.open(io.BytesIO(pdf_bytes), password=password) as pdf:
+                                tables = []
+                                for page in pdf.pages:
+                                    tbl = page.extract_table()
+                                    if tbl:
+                                        tables.append(pd.DataFrame(tbl[1:], columns=tbl[0]))
+                                if tables:
+                                    df = pd.concat(tables, ignore_index=True)
+                                    success = True
+                        except Exception as ex:
+                            st.error(f"Password provided is incorrect or parsing failed: {ex}")
+                            st.stop()
+                    else:
+                        st.error("Password is required to open this PDF.")
+                        st.stop()
                 else:
-                    st.error("No tabular data found in the uploaded PDF.")
+                    st.error(f"Error processing PDF: {e}")
                     st.stop()
-            else:
-                st.error("Unsupported file type.")
+
+            if not success:
+                st.error("No tabular data found in the uploaded PDF.")
                 st.stop()
 
-            st.success("Statement uploaded successfully!")
-            st.dataframe(df.head())
-        except Exception as e:
-            st.error(f"Error processing file: {repr(e)}")
+        else:
+            st.error("Unsupported file type. Please upload CSV or PDF.")
             st.stop()
+
+        # Display parsed data
+        st.success("Statement uploaded successfully!")
+        st.dataframe(df.head())
 
         # Build prompt for OpenAI
         prompt = f"""
@@ -78,7 +111,7 @@ Provide the answer concisely without disclaimers.
         if not openai.api_key:
             st.error("OPENAI_API_KEY not found in secrets. Please configure your app secrets.")
             st.stop()
-        
+
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-4",
@@ -92,7 +125,7 @@ Provide the answer concisely without disclaimers.
             st.subheader("🧾 Tax Summary")
             st.write(answer)
         except Exception as e:
-            st.error(f"Error from OpenAI API: {repr(e)}")
+            st.error(f"Error from OpenAI API: {e}")
 
 # ---- Footer ----
 st.markdown("---")
